@@ -1,97 +1,77 @@
-import urllib, sqlite3
+import sqlite3, urllib
 from bs4 import *
 
-root = "http://python-data.dr-chuck.net/"
 conn = sqlite3.connect('spider.sqlite')
 cur = conn.cursor()
 
-cur.executescript('''
-	DROP TABLE IF EXISTS Pages;
-	DROP TABLE IF EXISTS Links;
-	DROP TABLE IF EXISTS Webs;
-	''')
-
-cur.executescript('''
-	CREATE TABLE IF NOT EXISTS Pages
-		(id INTEGER PRIMARY KEY, url TEXT UNIQUE, html TEXT, error INTEGER, old_rank REAL, new_rank REAL);
-	CREATE TABLE IF NOT EXISTS Links
-		(from_id INTEGER, to_id INTEGER);
-	CREATE TABLE IF NOT EXISTS Webs
-		(url TEXT UNIQUE);
-	''')
-
-
-
 link_count = int(raw_input('How many pages would you like to retrive?\n>> '))
+root = 'http://python-data.dr-chuck.net'
 
 while link_count > 0:
-	#Check if we are already in progress
-	cur.execute('SELECT url FROM Pages WHERE html is NULL and error is NULL ORDER BY RANDOM() LIMIT 1')
-	row = cur.fetchone()
-	print 'cur.fetchone()', cur.fetchone()
-	print 'row', row
 
-	if row is not None: # if data retraval is in progress
-		start_url = row
-		print '\n\nstarting with url: ', start_url 
-		try:
-			html = urllib.urlopen(start_url).html
-			print 'Retriving', start_url, '\n'
-			cur.execute('INSERT OR IGNORE INTO Webs(url) VALUES (?)', (start_url, ))
-			cur.execute('UPDATE Pages SET html=? WHERE url =?', (html, start_url))
+	cur.execute('SELECT id, url FROM Pages WHERE html is NULL ORDER BY RANDOM() LIMIT 1')
+	row = cur.fetchone()[1]
+
+	if row is not None:
+		print '\n\n\nSELECTED URL: ', row
+		print 'initial type: ', type(row)
+
+		encoded_row = row.encode('utf-8')
+		# print 'selected url again... ', row
+		# print 'type of row after encoding: ', type(row)
+		# print 'encoded url... ', encoded_row
+		# print 'type after encoding: ', type(encoded_row)
+
+		link_count -=1
+		html = urllib.urlopen(row).read()
+		################################################################
+		cur.execute('UPDATE Pages SET html=? WHERE url=?', (html, encoded_row))
+		conn.commit()
+		########### THIS # IS # THE # PROBLEM ##########
+		################################################################
+		print '\nRetrived... ', row
+		#print html
+		bs = BeautifulSoup(html, "lxml")
+		atags = bs('a')
+		for tag in atags:
+			url = tag.get('href', None)
+			print 'Saving to be retrived', url
+			cur.execute('INSERT OR IGNORE INTO Pages(url, new_rank) VALUES (?,?)', (url, 1.0))
 			conn.commit()
-
-			bs = BeautifulSoup(html, "lxml")
-			atags = bs('a')
-			for tag in atags:
-				url = tag.get('href', None)
-				print 'Saving to be retrived', url
-				cur.execute('INSERT OR IGNORE INTO Pages(url) VALUES (?)', (url, ))
-				conn.commit()
-
-		except: 
-			cur.execute('UPDATE Pages SET error=-1 WHERE url=?', (start_url, ) )
+			cur.execute('SELECT id FROM Pages WHERE url =?', (url, ))
+			to_id = cur.fetchone()[0]
+			cur.execute('INSERT INTO Links(from_id, to_id) VALUES (?,?)', (encoded_row, url.encode('utf-8')))
 			conn.commit()
-			print 'SOMETHING FAILED with the url picked from the database'
-
 
 	else:
-		#Starting the program for the first time
+		# Start the program for the first time
 		start_url = raw_input('Enter a Start URL:\n>>')
-		if len(start_url) < 1: start_url = 'http://python-data.dr-chuck.net'
+		if len(start_url) < 1: start_url = root
 
-		try:
-			html = urllib.urlopen(start_url).read()
-			print 'Retriving', start_url, '\n'
-			cur.execute('INSERT OR IGNORE INTO Webs(url) VALUES (?)', (start_url, ))
-			cur.execute('INSERT OR IGNORE INTO Pages(url, html) VALUES (?, ?)', (start_url, html))
-			conn.commit()
+		print '\n\n\nTrying to retrived... ', start_url
+		html = urllib.urlopen(start_url).read()
+		link_count -= 1
+		cur.execute('INSERT OR IGNORE INTO Webs(url) VALUES (?)', (start_url, ))
+		cur.execute('INSERT OR IGNORE INTO Pages(url, html, new_rank) VALUES (?,?,?)', (start_url, html, 1.0))
+		conn.commit()
+		print 'Retrived...', start_url
 
-			bs = BeautifulSoup(html, "lxml")
-			atags= bs('a')
 
-			count = 0
-			for tag in atags:
-				url = root+str(tag.get('href', None))
-				url = url.encode('utf-8')
-				print 'URLLLLLL: ', url
-				###################################
-				###################################
-				#above code - produces unicode
-				#################################
-				###################################
-				
-				if not url.endswith('html') or url.endswith('htm'): 
-					print 'skipping', url
-					continue
-				print 'Saving to be retrived', url
-				count += 1
-				print count
-				cur.execute('INSERT OR IGNORE INTO Pages(url) VALUES (?)', (url, ))
+		bs = BeautifulSoup(html, "lxml")
+		atags = bs('a')
+		for tag in atags:
+			raw_link = tag.get('href', None)
+			if not raw_url.startswith('http') : url = root+raw_url
+			else: url = raw_url
+			if url.endswith('/') : url = url[:-1]
+			if not url.endswith('htm') or url.endswith('html'):
+				cur.execute('INSERT OR IGNORE INTO Pages(url, error) VALUES (?,?)', (url, -1))
 				conn.commit()
-
-		except: 
-			cur.execute('UPDATE Pages SET error=-1 WHERE url=?', (start_url, ) )
+				print '\nERROR recorded with...', url, '\n'
+				continue
+			cur.execute('INSERT OR IGNORE INTO Pages(url) VALUES (?)', (url, ))
 			conn.commit()
-			print 'SOMETHING FAILED with start url'
-	link_count -=1
+			print 'Saving to be retrived', url 
+
+conn.close()
+
